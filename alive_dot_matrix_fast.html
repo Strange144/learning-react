@@ -1,0 +1,260 @@
+
+<style>
+  body { margin:0; background:#080808; overflow:hidden; font-family:sans-serif; }
+  canvas { display:block; }
+  .controls {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    display:flex; gap:8px; align-items:center;
+    background:rgba(8,8,8,0.93);
+    padding:10px 16px; border-radius:12px;
+    border:0.5px solid rgba(255,255,255,0.1);
+  }
+  #imgUpload { display:none; }
+  label.upload-btn {
+    padding:8px 18px; background:rgba(255,255,255,0.07);
+    border:0.5px solid rgba(255,255,255,0.2); border-radius:8px;
+    color:#fff; font-size:14px; cursor:pointer;
+  }
+  label.upload-btn:hover { background:rgba(255,255,255,0.13); }
+  #textInput {
+    padding:8px 12px; background:rgba(255,255,255,0.05);
+    border:0.5px solid rgba(255,255,255,0.14); border-radius:8px;
+    color:#fff; font-size:14px; outline:none; width:170px;
+  }
+  #textInput::placeholder { color:rgba(255,255,255,0.25); }
+  button {
+    padding:8px 14px; background:rgba(255,255,255,0.07);
+    border:0.5px solid rgba(255,255,255,0.18); border-radius:8px;
+    color:#fff; font-size:14px; cursor:pointer;
+  }
+  button:hover { background:rgba(255,255,255,0.14); }
+  .sep { color:rgba(255,255,255,0.13); }
+</style>
+
+<canvas id="canvas"></canvas>
+<div class="controls">
+  <label class="upload-btn" for="imgUpload">Upload Image</label>
+  <input type="file" id="imgUpload" accept="image/*" onchange="loadImage(event)" />
+  <span class="sep">|</span>
+  <input type="text" id="textInput" placeholder="Type text…" />
+  <button onclick="triggerText()">Show Text</button>
+  <button onclick="triggerImage()">Show Image</button>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const W = canvas.width, H = canvas.height;
+
+const DOT = 4, GAP = 3, STEP = 7;
+const cols = Math.floor(W / STEP);
+const rows = Math.floor(H / STEP);
+const offX = (W - cols * STEP) / 2;
+const offY = (H - rows * STEP) / 2;
+
+const grid = [];
+for (let r = 0; r < rows; r++) {
+  for (let c = 0; c < cols; c++) {
+    grid.push({
+      x: offX + c * STEP,
+      y: offY + r * STEP,
+      cx: offX + c * STEP + DOT/2,
+      cy: offY + r * STEP + DOT/2,
+      col: c, row: r,
+      r:30, g:30, b:30, a:0.06,
+      tr:30, tg:30, tb:30, ta:0.06,
+      phase: Math.random() * Math.PI * 2,
+      delay: 0,
+      active: false
+    });
+  }
+}
+
+let imagePixels = null;
+let imageLoaded = false;
+let time = 0;
+let transitioning = false;
+let transitionMode = null;
+let transitionProgress = 0;
+let pendingMode = null;
+let pendingPixels = null;
+let currentPixels = null;
+let mode = 'idle';
+
+function sampleImage(imgEl) {
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const oc = off.getContext('2d');
+  const sc = Math.max(W/imgEl.width, H/imgEl.height);
+  const sw = imgEl.width*sc, sh = imgEl.height*sc;
+  oc.drawImage(imgEl, (W-sw)/2, (H-sh)/2, sw, sh);
+  const data = oc.getImageData(0,0,W,H).data;
+  return grid.map(p => {
+    const ix = Math.min(W-1, Math.round(p.cx));
+    const iy = Math.min(H-1, Math.round(p.cy));
+    const i = (iy*W+ix)*4;
+    return { r:data[i], g:data[i+1], b:data[i+2], a:data[i+3]/255, active:data[i+3]>38 };
+  });
+}
+
+function sampleText(text) {
+  ctx.clearRect(0,0,W,H);
+  const fs = Math.min(200, W / Math.max(text.length,1) * 1.35);
+  ctx.font = `bold ${fs}px Arial`;
+  ctx.fillStyle = 'white';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, W/2, H/2 + fs*0.36);
+  const data = ctx.getImageData(0,0,W,H).data;
+  return grid.map(p => {
+    const ix = Math.min(W-1, Math.round(p.cx));
+    const iy = Math.min(H-1, Math.round(p.cy));
+    const idx = (iy*W+ix)*4;
+    const on = data[idx+3] > 128;
+    return { r:255, g:255, b:255, a: on ? 1 : 0.06, active: on };
+  });
+}
+
+function startTransition(newPixels, newMode) {
+  pendingPixels = newPixels;
+  pendingMode = newMode;
+  // shorter stagger: 0–20 frames
+  grid.forEach(p => { p.delay = Math.floor(Math.random() * 20); });
+  transitionMode = 'dissolve_out';
+  transitionProgress = 0;
+  transitioning = true;
+}
+
+function loadImage(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    imagePixels = sampleImage(img);
+    imageLoaded = true;
+    URL.revokeObjectURL(img.src);
+    triggerImage();
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+function triggerImage() {
+  if (!imageLoaded) return;
+  startTransition(imagePixels, 'image');
+}
+
+function triggerText() {
+  const text = document.getElementById('textInput').value.trim();
+  if (!text) return;
+  startTransition(sampleText(text), 'text');
+}
+
+function animate() {
+  ctx.clearRect(0,0,W,H);
+  time++;
+
+  if (transitioning) {
+    transitionProgress++;
+
+    if (transitionMode === 'dissolve_out') {
+      grid.forEach(p => {
+        if (transitionProgress > p.delay) {
+          p.a  += (0.04 - p.a)  * 0.45; // fast fade
+          p.r  += (20   - p.r)  * 0.45;
+          p.g  += (20   - p.g)  * 0.45;
+          p.b  += (20   - p.b)  * 0.45;
+        }
+      });
+
+      // switch to phase 2 after ~30 frames
+      if (transitionProgress > 30) {
+        transitionProgress = 0;
+        currentPixels = pendingPixels;
+        mode = pendingMode;
+
+        if (pendingMode === 'text') {
+          transitionMode = 'text_in';
+          // tighter column stagger — faster sweep
+          grid.forEach(p => {
+            p.delay = p.col * 0.6 + Math.random() * 2;
+          });
+        } else {
+          transitionMode = 'random_in';
+          // shorter random delay range
+          grid.forEach(p => {
+            p.delay = Math.floor(Math.random() * 35);
+          });
+        }
+      }
+    }
+
+    else if (transitionMode === 'text_in') {
+      grid.forEach((p, i) => {
+        const tp = currentPixels[i];
+        if (transitionProgress > p.delay) {
+          p.r += (tp.r - p.r) * 0.42;
+          p.g += (tp.g - p.g) * 0.42;
+          p.b += (tp.b - p.b) * 0.42;
+          p.a += (tp.a - p.a) * 0.42;
+        }
+      });
+      if (transitionProgress > cols * 0.6 + 25) {
+        transitioning = false;
+        transitionMode = null;
+      }
+    }
+
+    else if (transitionMode === 'random_in') {
+      grid.forEach((p, i) => {
+        const tp = currentPixels[i];
+        if (transitionProgress > p.delay) {
+          p.r += (tp.r - p.r) * 0.38;
+          p.g += (tp.g - p.g) * 0.38;
+          p.b += (tp.b - p.b) * 0.38;
+          p.a += (tp.a - p.a) * 0.38;
+        }
+      });
+      if (transitionProgress > 60) {
+        transitioning = false;
+        transitionMode = null;
+      }
+    }
+  }
+
+  // idle breathing for image
+  if (!transitioning && mode === 'image' && currentPixels) {
+    grid.forEach((p, i) => {
+      const tp = currentPixels[i];
+      if (tp.active) {
+        p.r = tp.r; p.g = tp.g; p.b = tp.b;
+        p.a = tp.a * (0.93 + 0.07 * Math.sin(time * 0.03 + p.phase));
+      }
+    });
+  }
+
+  // thinking sparks while transitioning
+  if (transitioning && Math.random() < 0.5) {
+    const p = grid[Math.floor(Math.random() * grid.length)];
+    p.r = 210 + Math.random()*45;
+    p.g = 210 + Math.random()*45;
+    p.b = 220 + Math.random()*35;
+    p.a = 0.5 + Math.random() * 0.5;
+  }
+
+  // draw
+  grid.forEach(p => {
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fillRect(p.x, p.y, DOT, DOT);
+    if (p.a > 0.04) {
+      ctx.fillStyle = `rgba(${Math.round(p.r)},${Math.round(p.g)},${Math.round(p.b)},${Math.min(p.a,1).toFixed(3)})`;
+      ctx.fillRect(p.x, p.y, DOT, DOT);
+    }
+  });
+
+  requestAnimationFrame(animate);
+}
+
+grid.forEach(p => { p.r=25; p.g=25; p.b=25; p.a=0.05; });
+animate();
+</script>
