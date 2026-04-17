@@ -7,8 +7,8 @@ export class Authservice {
 
     constructor() {
         this.client
-            .setEndpoint(conf.appwriteUrl)
-            .setProject(conf.appwriteProjectId);
+            .setEndpoint(conf.VITE_APPWRITE_URL)
+            .setProject(conf.VITE_APPWRITE_PROJECT_ID);
         this.account = new Account(this.client);
     }
 
@@ -16,7 +16,7 @@ export class Authservice {
         try {
             const userAccount = await this.account.create(ID.unique(), email, password, name);
             if (userAccount) {
-                return
+
                 return this.login(email, password)
             } else {
                 return userAccount
@@ -26,7 +26,7 @@ export class Authservice {
         }
     }
 
-    async login(emial, password) {
+    async login(email, password) {
         try {
             return await this.account.createEmailSession(email, password);
         } catch (error) {
